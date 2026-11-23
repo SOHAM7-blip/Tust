@@ -1,0 +1,2065 @@
+-- ✦ PIRATES RECHAT ✦ — COMBINED (DARK THEME - MOBILE FIXED)
+-- Owners/Creators: cravingsforanshi + krishnahuywar
+
+getgenv().PiratesRechatLoaded = nil
+if getgenv().PiratesRechatLoaded then return end
+getgenv().PiratesRechatLoaded = true
+
+local SESSION_START_TIME = os.time()
+
+-- ============================================================
+-- OWNER / CREATOR CONFIG
+-- ============================================================
+local OWNER_NAMES = {
+    ["cravingsforanshi"] = true,
+    ["itmeans0011"] = true,
+}
+local OWNER_USERIDS = {
+    [11370361802] = true,
+}
+
+local function isOwnerName(name)
+    if not name then return false end
+    return OWNER_NAMES[tostring(name):lower()] == true
+end
+
+local function isOwnerUserId(uid)
+    return OWNER_USERIDS[tonumber(uid)] == true
+end
+
+-- ============================================================
+-- SERVICES & SAFE GUI PARENT
+-- ============================================================
+local HttpService      = game:GetService("HttpService")
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+local SoundService     = game:GetService("SoundService")
+local LocalPlayer      = Players.LocalPlayer
+local JobId            = game.JobId
+
+local function getSafeGuiParent()
+    if gethui then
+        local ok, hui = pcall(gethui)
+        if ok and hui then return hui end
+    end
+    local okCore, core = pcall(function() return game:GetService("CoreGui") end)
+    if okCore and core then
+        local test = Instance.new("Folder")
+        local okParent = pcall(function() test.Parent = core end)
+        test:Destroy()
+        if okParent then return core end
+    end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- ============================================================
+-- SAFE REQUEST
+-- ============================================================
+local function rawRequest(opts)
+    if not opts or not opts.Url then return nil end
+    local fn = request or http_request or (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
+    if not fn then return nil end
+    local ok, res = pcall(fn, opts)
+    if ok and res then return res end
+    return nil
+end
+
+-- ============================================================
+-- FIREBASE
+-- ============================================================
+local FB_BASE           = "https://zenit-chat-8df28-default-rtdb.firebaseio.com"
+local DATABASE_URL      = FB_BASE .. "/chat"
+local ONLINE_URL        = FB_BASE .. "/online"
+local UNSENT_URL        = FB_BASE .. "/unsent"
+local BAN_URL           = FB_BASE .. "/bans"
+local CUSTOM_TITLES_URL = FB_BASE .. "/custom_titles"
+local CMDS_URL          = FB_BASE .. "/cmds"
+local PFPS_URL          = FB_BASE .. "/pfps"
+local MUSIC_URL         = FB_BASE .. "/music"
+local THEME_URL         = FB_BASE .. "/theme"
+local ACCESS_URL        = FB_BASE .. "/panel_access"
+local JOIN_URL          = FB_BASE .. "/join_announcements"
+local AURAS_URL         = FB_BASE .. "/auras"
+local TEDDY_URL         = FB_BASE .. "/teddy"
+local FOLLOWERS_URL     = FB_BASE .. "/rechat_followers"
+local FOLLOWING_URL     = FB_BASE .. "/rechat_following"
+local AURA_ACCESS_URL   = FB_BASE .. "/aura_access"
+local AURA_COLOR_URL    = FB_BASE .. "/aura_color"
+local BROADCAST_URL     = FB_BASE .. "/ember_auras_broadcast"
+
+local FIREBASE_WEB_API_KEY = "AIzaSyCzL0r6LpdvrzZM5PYvhEBFUx-NEKOZOnM"
+local _fbIdToken = nil
+local _fbUid = nil
+local _fbTokenExpiry = 0
+
+local function fbSignIn()
+    local res = rawRequest({
+        Url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key="..FIREBASE_WEB_API_KEY,
+        Method = "POST",
+        Headers = {["Content-Type"]="application/json"},
+        Body = '{"returnSecureToken":true}',
+    })
+    if not res or not res.Body then return false end
+    local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+    if not ok or type(data)~="table" or not data.idToken then return false end
+    _fbIdToken = data.idToken
+    _fbUid = data.localId
+    _fbTokenExpiry = os.time() + 3300
+    return true
+end
+
+pcall(fbSignIn)
+task.spawn(function() while true do task.wait(3300) pcall(fbSignIn) end end)
+
+local function fbReq(opts)
+    if type(opts)=="table" and type(opts.Url)=="string" and opts.Url:find("firebaseio%.com") then
+        if not _fbIdToken or os.time() >= _fbTokenExpiry then pcall(fbSignIn) end
+        if _fbIdToken then
+            opts.Url = opts.Url..(opts.Url:find("?") and "&" or "?").."auth=".._fbIdToken
+        end
+    end
+    return rawRequest(opts)
+end
+
+local function checkIsOwner()
+    local ok = false
+    pcall(function()
+        if isOwnerName(LocalPlayer.Name) then ok = true end
+        if isOwnerUserId(LocalPlayer.UserId) then ok = true end
+    end)
+    return ok
+end
+
+local isOwner = checkIsOwner()
+local RealUserId = LocalPlayer.UserId
+local RealName = LocalPlayer.Name
+local RealDisplayName = LocalPlayer.DisplayName
+
+-- ============================================================
+-- PANEL ACCESS
+-- ============================================================
+local PanelAccess = {}
+local MyPanelAccess = false
+
+local function loadPanelAccess()
+    pcall(function()
+        local res = fbReq({Url = ACCESS_URL..".json", Method="GET"})
+        if res and res.Body and res.Body ~= "null" then
+            local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+            if ok and type(data) == "table" then
+                local now = os.time()
+                for uidStr, entry in pairs(data) do
+                    local uid = tonumber(uidStr)
+                    if uid and type(entry) == "table" and entry.expiresAt then
+                        if entry.expiresAt > now then
+                            PanelAccess[uid] = entry.expiresAt
+                        else
+                            task.spawn(function()
+                                pcall(function()
+                                    fbReq({Url = ACCESS_URL.."/"..uidStr..".json", Method = "DELETE"})
+                                end)
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if isOwner then
+        MyPanelAccess = true
+    else
+        local exp = PanelAccess[RealUserId]
+        MyPanelAccess = (exp and exp > os.time()) and true or false
+    end
+end
+
+pcall(loadPanelAccess)
+task.spawn(function() while task.wait(20) do pcall(loadPanelAccess) end end)
+
+local function givePanelAccess(targetUid, targetName, durationSeconds)
+    if not isOwner then return false end
+    local exp = os.time() + durationSeconds
+    PanelAccess[targetUid] = exp
+    task.spawn(function()
+        pcall(function()
+            fbReq({
+                Url = ACCESS_URL.."/"..tostring(targetUid)..".json",
+                Method = "PUT",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode({
+                    name = targetName,
+                    expiresAt = exp,
+                    grantedBy = RealUserId,
+                    grantedAt = os.time(),
+                    duration = durationSeconds,
+                })
+            })
+        end)
+    end)
+    return true
+end
+
+local function revokePanelAccess(targetUid)
+    if not isOwner then return false end
+    PanelAccess[targetUid] = nil
+    task.spawn(function()
+        pcall(function()
+            fbReq({Url = ACCESS_URL.."/"..tostring(targetUid)..".json", Method = "DELETE"})
+        end)
+    end)
+    return true
+end
+
+-- ============================================================
+-- BAN / UNBAN
+-- ============================================================
+local BannedUsers = {}
+local BannedHwids = {}
+
+local function getHWID()
+    local hwid = ""
+    pcall(function()
+        if gethwid then
+            local ok, r = pcall(gethwid)
+            if ok and type(r) == "string" then hwid = r:lower():gsub("%s+", "") end
+        end
+    end)
+    return hwid
+end
+
+local MyHWID = getHWID()
+
+local function loadBans()
+    pcall(function()
+        local res = fbReq({Url = BAN_URL.."/byRobloxId.json", Method="GET"})
+        if res and res.Body and res.Body ~= "null" then
+            local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+            if ok and type(data) == "table" then
+                for uidStr, entry in pairs(data) do
+                    local uid = tonumber(uidStr)
+                    if uid and type(entry) == "table" then
+                        BannedUsers[uid] = entry
+                    end
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local res = fbReq({Url = BAN_URL.."/byHwid.json", Method="GET"})
+        if res and res.Body and res.Body ~= "null" then
+            local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+            if ok and type(data) == "table" then
+                for hwid, entry in pairs(data) do
+                    if type(entry) == "table" then
+                        BannedHwids[hwid] = entry
+                    end
+                end
+            end
+        end
+    end)
+end
+
+pcall(loadBans)
+
+local function checkSelfBan()
+    if isOwner then return false end
+    if BannedUsers[RealUserId] then return BannedUsers[RealUserId].reason or "Banned" end
+    if MyHWID ~= "" and BannedHwids[MyHWID] then return BannedHwids[MyHWID].reason or "Banned" end
+    return false
+end
+
+local selfBan = checkSelfBan()
+if selfBan then
+    task.spawn(function()
+        task.wait(1)
+        pcall(function()
+            LocalPlayer:Kick("🚫 You are permanently banned from Pirates Rechat.\nReason: "..tostring(selfBan))
+        end)
+    end)
+    return
+end
+
+local function banPlayer(targetUid, targetName, reason)
+    if not isOwner then return false end
+    local entry = {
+        name = targetName,
+        reason = reason or "Banned by Pirates Owner",
+        bannedAt = os.time(),
+        bannedBy = RealUserId,
+    }
+    BannedUsers[targetUid] = entry
+    task.spawn(function()
+        pcall(function()
+            fbReq({
+                Url = BAN_URL.."/byRobloxId/"..tostring(targetUid)..".json",
+                Method = "PUT",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode(entry)
+            })
+        end)
+    end)
+    task.spawn(function()
+        pcall(function()
+            local ts = string.format("%012d", os.time())..math.random(100, 999)
+            fbReq({
+                Url = CMDS_URL.."/"..ts..".json",
+                Method = "PUT",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode({
+                    TargetUid = targetUid,
+                    Action = "ban",
+                    Value = "🚫 You are permanently banned from Pirates Rechat.\nReason: "..(reason or "Banned by Pirates Owner"),
+                    IssuedBy = RealUserId,
+                    Server = "GLOBAL",
+                    expiresAt = os.time() + 5,
+                })
+            })
+        end)
+    end)
+    return true
+end
+
+local function unbanPlayer(targetUid)
+    if not isOwner then return false end
+    BannedUsers[targetUid] = nil
+    task.spawn(function()
+        pcall(function()
+            fbReq({Url = BAN_URL.."/byRobloxId/"..tostring(targetUid)..".json", Method = "DELETE"})
+        end)
+    end)
+    return true
+end
+
+-- ============================================================
+-- DARK THEME
+-- ============================================================
+local PiratesTheme = {
+    mainBg   = Color3.fromRGB(16, 17, 24),
+    headerBg = Color3.fromRGB(24, 26, 36),
+    cardBg   = Color3.fromRGB(30, 32, 44),
+    accent   = Color3.fromRGB(124, 92, 255),
+    text     = Color3.fromRGB(238, 240, 248),
+    subText  = Color3.fromRGB(155, 162, 185),
+}
+
+local function loadTheme()
+    pcall(function()
+        local res = fbReq({Url=THEME_URL..".json", Method="GET"})
+        if res and res.Body and res.Body~="null" then
+            local ok,data = pcall(HttpService.JSONDecode,HttpService,res.Body)
+            if ok and type(data)=="table" then
+                if data.mainBg then PiratesTheme.mainBg = Color3.fromRGB(data.mainBg[1],data.mainBg[2],data.mainBg[3]) end
+                if data.headerBg then PiratesTheme.headerBg = Color3.fromRGB(data.headerBg[1],data.headerBg[2],data.headerBg[3]) end
+                if data.accent then PiratesTheme.accent = Color3.fromRGB(data.accent[1],data.accent[2],data.accent[3]) end
+                if data.text then PiratesTheme.text = Color3.fromRGB(data.text[1],data.text[2],data.text[3]) end
+                if data.cardBg then PiratesTheme.cardBg = Color3.fromRGB(data.cardBg[1],data.cardBg[2],data.cardBg[3]) end
+            end
+        end
+    end)
+end
+
+local function saveTheme()
+    pcall(function()
+        fbReq({
+            Url = THEME_URL..".json",
+            Method = "PUT",
+            Headers = {["Content-Type"]="application/json"},
+            Body = HttpService:JSONEncode({
+                mainBg   = {math.floor(PiratesTheme.mainBg.R*255),math.floor(PiratesTheme.mainBg.G*255),math.floor(PiratesTheme.mainBg.B*255)},
+                headerBg = {math.floor(PiratesTheme.headerBg.R*255),math.floor(PiratesTheme.headerBg.G*255),math.floor(PiratesTheme.headerBg.B*255)},
+                cardBg   = {math.floor(PiratesTheme.cardBg.R*255),math.floor(PiratesTheme.cardBg.G*255),math.floor(PiratesTheme.cardBg.B*255)},
+                accent   = {math.floor(PiratesTheme.accent.R*255),math.floor(PiratesTheme.accent.G*255),math.floor(PiratesTheme.accent.B*255)},
+                text     = {math.floor(PiratesTheme.text.R*255),math.floor(PiratesTheme.text.G*255),math.floor(PiratesTheme.text.B*255)},
+            })
+        })
+    end)
+end
+
+pcall(loadTheme)
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local TagCache = {}
+local SpecialLabels = {}
+local processedKeys = {}
+local sortedMessageKeys = {}
+local keyToButton = {}
+local MutedPlayers = {}
+local CustomTitles = {}
+local CustomPFP = {}
+local PrivateTargetId = nil
+local PrivateTargetName = nil
+local ReplyTargetName = nil
+local ReplyTargetMsg = nil
+local editingKey = nil
+local isKickedOrBanned = false
+local MAX_MESSAGES = 25
+local _lastSentTime = 0
+local _lastSentMsg = ""
+local MAX_CHAR_LIMIT = 200
+local _msgInsertSeq = 0
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function GetPlayerByName(name)
+    if not name or name=="" then return nil end
+    name=string.lower(name)
+    for _,p in pairs(Players:GetPlayers()) do
+        if string.find(string.lower(p.Name),name,1,true) or string.find(string.lower(p.DisplayName),name,1,true) then
+            return p
+        end
+    end
+    return nil
+end
+
+local function isPlayerOwner(player)
+    if not player then return false end
+    if isOwnerName(player.Name) then return true end
+    if isOwnerUserId(player.UserId) then return true end
+    return false
+end
+
+local function SafeEncodeMsg(raw)
+    raw=tostring(raw or "")
+    raw=raw:gsub("<[^>]*>","")
+    return raw
+end
+
+local USER_COLORS = {
+    Color3.fromRGB(255,95,145),Color3.fromRGB(115,145,255),Color3.fromRGB(65,195,255),
+    Color3.fromRGB(255,155,60),Color3.fromRGB(165,115,255),Color3.fromRGB(60,230,155),
+    Color3.fromRGB(255,215,65),Color3.fromRGB(255,95,95),
+}
+local function GetUserColor(name)
+    local sum=0
+    for i=1,#name do sum=sum+string.byte(name,i) end
+    return USER_COLORS[(sum%#USER_COLORS)+1]
+end
+
+local function savePFP(userId, assetId)
+    pcall(function()
+        fbReq({
+            Url = PFPS_URL.."/"..tostring(userId)..".json",
+            Method = "PUT",
+            Headers = {["Content-Type"]="application/json"},
+            Body = HttpService:JSONEncode({asset=assetId,setBy=RealUserId,t=os.time()})
+        })
+    end)
+end
+
+local function loadAllPFPs()
+    pcall(function()
+        local res = fbReq({Url=PFPS_URL..".json", Method="GET"})
+        if res and res.Body and res.Body~="null" then
+            local ok,data = pcall(HttpService.JSONDecode,HttpService,res.Body)
+            if ok and type(data)=="table" then
+                for uidStr,entry in pairs(data) do
+                    local uid = tonumber(uidStr)
+                    if uid and type(entry)=="table" and entry.asset then
+                        CustomPFP[uid] = tostring(entry.asset)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+pcall(loadAllPFPs)
+
+-- ============================================================
+-- SOUNDCLOUD MUSIC
+-- ============================================================
+local MusicPlayer = nil
+local CurrentTrack = nil
+local currentVolume = 0.5
+local LastMusicTimestamp = 0
+local _scClientId = "O4KAW11rMMnH5modEfDHOdzmnuvsck9X"
+local _musicDownloading = false
+
+local function stopLocalMusic()
+    if MusicPlayer then pcall(function() MusicPlayer:Stop() MusicPlayer:Destroy() end) MusicPlayer = nil end
+    CurrentTrack = nil
+end
+
+local function broadcastMusic(action, trackData, startedBy)
+    pcall(function()
+        fbReq({
+            Url = MUSIC_URL.."/current.json",
+            Method = "PUT",
+            Headers = {["Content-Type"]="application/json"},
+            Body = HttpService:JSONEncode({
+                action = action,
+                track = trackData,
+                startedBy = startedBy or RealDisplayName,
+                startedByUid = RealUserId,
+                timestamp = os.time() * 1000 + math.random(1,999),
+            })
+        })
+    end)
+end
+
+local function syncMusic()
+    pcall(function()
+        local res = fbReq({Url = MUSIC_URL.."/current.json", Method="GET"})
+        if not res or not res.Body or res.Body == "null" then return end
+        local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+        if not ok or type(data) ~= "table" then return end
+        if (data.timestamp or 0) <= LastMusicTimestamp then return end
+        LastMusicTimestamp = data.timestamp or 0
+        if data.action == "stop" then
+            stopLocalMusic()
+        elseif data.action == "play" and data.track then
+            local trackData = data.track
+            task.spawn(function()
+                if _musicDownloading then return end
+                _musicDownloading = true
+                local streamUrl = trackData.streamUrl
+                if not streamUrl then _musicDownloading = false; return end
+                if MusicPlayer then
+                    pcall(function() MusicPlayer:Stop() MusicPlayer:Destroy() end)
+                    MusicPlayer = nil
+                end
+                if makefolder then pcall(makefolder, "pirates music") end
+                local localAsset = nil
+                local okDl, body = pcall(function()
+                    local fn = request or http_request or (http and http.request) or (syn and syn.request)
+                    if not fn then return nil end
+                    local r = fn({Url = streamUrl, Method = "GET"})
+                    return r and r.Body
+                end)
+                if okDl and body and #body > 10000 and writefile and getcustomasset then
+                    local okWrite = pcall(writefile, "pirates music/music_listener.mp3", body)
+                    if okWrite then
+                        task.wait(0.15)
+                        pcall(function()
+                            localAsset = getcustomasset("pirates music/music_listener.mp3")
+                        end)
+                    end
+                end
+                if localAsset then
+                    pcall(function()
+                        MusicPlayer = Instance.new("Sound")
+                        MusicPlayer.Parent = SoundService
+                        MusicPlayer.Name = "PiratesMusicListener"
+                        MusicPlayer.SoundId = localAsset
+                        MusicPlayer.Volume = currentVolume
+                        MusicPlayer:Play()
+                        CurrentTrack = trackData
+                    end)
+                end
+                _musicDownloading = false
+            end)
+        end
+    end)
+end
+
+local function getScClientId(force)
+    return _scClientId
+end
+
+local function scFetch(url, retry)
+    local fn = request or http_request or (http and http.request) or (syn and syn.request)
+    if not fn then return nil end
+    local ok, res = pcall(fn, {Url = url, Method = "GET"})
+    if ok and res and res.Body and #res.Body > 0 then
+        return res.Body
+    end
+    return nil
+end
+
+-- ============================================================
+-- UI (SAFE PARENT FOR MOBILE EXECUTORS)
+-- ============================================================
+local guiParent = getSafeGuiParent()
+local oldGui = guiParent:FindFirstChild("PiratesRechat_V1")
+if oldGui then oldGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "PiratesRechat_V1"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = guiParent
+
+local isGuiLocked = false
+local FloatBtn = nil
+
+local function showNotif(msg)
+    local notif = Instance.new("Frame", ScreenGui)
+    notif.Size = UDim2.new(0, 320, 0, 42)
+    notif.Position = UDim2.new(0.5, -160, 0, -50)
+    notif.BackgroundColor3 = PiratesTheme.headerBg
+    notif.BorderSizePixel = 0
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 12)
+    local st = Instance.new("UIStroke", notif)
+    st.Color = PiratesTheme.accent; st.Thickness = 1.2; st.Transparency = 0.2
+    local lbl = Instance.new("TextLabel", notif)
+    lbl.Size = UDim2.new(1, -16, 1, 0); lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1; lbl.RichText = true
+    lbl.Text = msg
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 12
+    lbl.TextColor3 = Color3.fromRGB(255,255,255)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Back), {
+        Position = UDim2.new(0.5, -160, 0, 6)
+    }):Play()
+    task.delay(3, function()
+        if notif and notif.Parent then
+            TweenService:Create(notif, TweenInfo.new(0.25), {
+                Position = UDim2.new(0.5, -160, 0, -50)
+            }):Play()
+            task.delay(0.3, function() if notif and notif.Parent then notif:Destroy() end end)
+        end
+    end)
+end
+
+local Main = Instance.new("Frame", ScreenGui)
+Main.Size = UDim2.new(0, 374, 0, 360)
+Main.Position = UDim2.new(0.5, 0, 0.45, 0)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.BackgroundColor3 = PiratesTheme.mainBg
+Main.BorderSizePixel = 0
+Main.Active = true
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 16)
+
+local MainStroke = Instance.new("UIStroke", Main)
+MainStroke.Color = PiratesTheme.accent
+MainStroke.Thickness = 1.6
+
+task.spawn(function()
+    while Main and Main.Parent do
+        local hue = (tick() % 6) / 6
+        MainStroke.Color = Color3.fromHSV(hue, 0.85, 0.95)
+        task.wait(0.05)
+    end
+end)
+
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    Main.InputBegan:Connect(function(inp)
+        if isGuiLocked then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = inp.Position; startPos = Main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if isGuiLocked then dragging = false; return end
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            local delta = inp.Position - dragStart
+            Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+local Header = Instance.new("Frame", Main)
+Header.Size = UDim2.new(1, 0, 0, 38)
+Header.BackgroundColor3 = PiratesTheme.headerBg
+Header.BorderSizePixel = 0
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 16)
+local HeaderFix = Instance.new("Frame", Header)
+HeaderFix.Size = UDim2.new(1, 0, 0.5, 0)
+HeaderFix.Position = UDim2.new(0, 0, 0.5, 0)
+HeaderFix.BackgroundColor3 = PiratesTheme.headerBg
+HeaderFix.BorderSizePixel = 0
+
+local TitleLabel = Instance.new("TextLabel", Header)
+TitleLabel.Size = UDim2.new(1, -130, 1, 0)
+TitleLabel.Position = UDim2.new(0, 16, 0, 0)
+TitleLabel.Text = "🏴‍☠️ PIRATES RECHAT 🏴‍☠️"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 13
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.RichText = true
+TitleLabel.ZIndex = 2
+
+task.spawn(function()
+    while TitleLabel and TitleLabel.Parent do
+        local hue = (tick() % 3) / 3
+        local c1 = Color3.fromHSV(hue, 0.9, 1)
+        local c2 = Color3.fromHSV((hue + 0.45) % 1, 0.9, 1)
+        local r1,g1,b1 = math.floor(c1.R*255), math.floor(c1.G*255), math.floor(c1.B*255)
+        local r2,g2,b2 = math.floor(c2.R*255), math.floor(c2.G*255), math.floor(c2.B*255)
+        TitleLabel.Text = string.format(
+            "<font color='rgb(%d,%d,%d)'>✦</font> <font color='rgb(%d,%d,%d)'>PIRATES</font> <font color='rgb(%d,%d,%d)'>RECHAT</font> <font color='rgb(%d,%d,%d)'>✦</font>",
+            r1,g1,b1, r2,g2,b2, r1,g1,b1, r2,g2,b2
+        )
+        task.wait(0.1)
+    end
+end)
+
+local LockBtn = Instance.new("TextButton", Header)
+LockBtn.Size = UDim2.new(0, 26, 0, 26)
+LockBtn.Position = UDim2.new(1, -66, 0.5, -13)
+LockBtn.Text = "🔓"; LockBtn.Font = Enum.Font.GothamBold; LockBtn.TextSize = 12
+LockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+LockBtn.BackgroundColor3 = PiratesTheme.accent
+LockBtn.BorderSizePixel = 0; LockBtn.ZIndex = 3
+Instance.new("UICorner", LockBtn).CornerRadius = UDim.new(1, 0)
+
+LockBtn.MouseButton1Click:Connect(function()
+    isGuiLocked = not isGuiLocked
+    LockBtn.Text = isGuiLocked and "🔒" or "🔓"
+    LockBtn.BackgroundColor3 = isGuiLocked and Color3.fromRGB(200, 60, 60) or PiratesTheme.accent
+    pcall(function() Main.Active = not isGuiLocked end)
+    if FloatBtn then pcall(function() FloatBtn.Active = not isGuiLocked end) end
+    showNotif(isGuiLocked and "🔒 GUI + Icon Locked" or "🔓 GUI + Icon Unlocked")
+end)
+
+local MinBtn = Instance.new("TextButton", Header)
+MinBtn.Size = UDim2.new(0, 26, 0, 26)
+MinBtn.Position = UDim2.new(1, -36, 0.5, -13)
+MinBtn.Text = "—"; MinBtn.Font = Enum.Font.GothamBold; MinBtn.TextSize = 13
+MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinBtn.BackgroundColor3 = PiratesTheme.accent
+MinBtn.BorderSizePixel = 0; MinBtn.ZIndex = 3
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(1, 0)
+
+MinBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    if FloatBtn then FloatBtn.Text = "🏴‍☠️" end
+end)
+
+local TabBar = Instance.new("Frame", Main)
+TabBar.Size = UDim2.new(1, -10, 0, 26)
+TabBar.Position = UDim2.new(0, 5, 0, 42)
+TabBar.BackgroundTransparency = 1
+local TabLayout = Instance.new("UIListLayout", TabBar)
+TabLayout.FillDirection = Enum.FillDirection.Horizontal
+TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabLayout.Padding = UDim.new(0, 3)
+
+local function MakeTabBtn(label, icon, order)
+    local btn = Instance.new("TextButton", TabBar)
+    btn.Text = icon.." "..label
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 8
+    btn.TextColor3 = PiratesTheme.text
+    btn.BackgroundColor3 = PiratesTheme.cardBg
+    btn.BackgroundTransparency = 0.1
+    btn.BorderSizePixel = 0
+    btn.LayoutOrder = order
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    return btn
+end
+
+local isAdmin = isOwner or MyPanelAccess
+local tabCount = isAdmin and 5 or 4
+local _tabW = math.floor((362 - (tabCount - 1) * 3) / tabCount)
+
+local ChatTabBtn = MakeTabBtn("CHAT", "💬", 1)
+ChatTabBtn.Size = UDim2.new(0, _tabW, 1, 0)
+
+local MusicTabBtn = nil
+if isAdmin then
+    MusicTabBtn = MakeTabBtn("MUSIC", "🎵", 2)
+    MusicTabBtn.Size = UDim2.new(0, _tabW, 1, 0)
+end
+
+local PFPTabBtn = MakeTabBtn("PFP", "🖼️", isAdmin and 3 or 2)
+PFPTabBtn.Size = UDim2.new(0, _tabW, 1, 0)
+
+local ThemeTabBtn = MakeTabBtn("THEME", "🎨", isAdmin and 4 or 3)
+ThemeTabBtn.Size = UDim2.new(0, _tabW, 1, 0)
+
+local AdminTabBtn
+if isAdmin then
+    AdminTabBtn = MakeTabBtn("PANEL", "⚙", 5)
+    AdminTabBtn.Size = UDim2.new(0, _tabW, 1, 0)
+end
+
+local function setTabActive(btn)
+    for _, b in ipairs(TabBar:GetChildren()) do
+        if b:IsA("TextButton") then
+            b.BackgroundColor3 = PiratesTheme.cardBg
+            b.BackgroundTransparency = 0.1
+            b.TextColor3 = PiratesTheme.text
+        end
+    end
+    btn.BackgroundColor3 = PiratesTheme.accent
+    btn.BackgroundTransparency = 0
+    btn.TextColor3 = Color3.new(1, 1, 1)
+end
+
+local Pages = Instance.new("Frame", Main)
+Pages.Size = UDim2.new(1, 0, 1, -110)
+Pages.Position = UDim2.new(0, 0, 0, 70)
+Pages.BackgroundTransparency = 1
+Pages.ClipsDescendants = true
+
+local ChatPage = Instance.new("Frame", Pages)
+ChatPage.Size = UDim2.new(1, 0, 1, 0)
+ChatPage.BackgroundTransparency = 1
+
+local ChatLog = Instance.new("ScrollingFrame", ChatPage)
+ChatLog.Size = UDim2.new(1, -10, 1, -4)
+ChatLog.Position = UDim2.new(0, 5, 0, 2)
+ChatLog.BackgroundTransparency = 1
+ChatLog.ScrollBarThickness = 3
+ChatLog.ScrollBarImageColor3 = PiratesTheme.accent
+ChatLog.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ChatLog.CanvasSize = UDim2.new(0, 0, 0, 0)
+local UIList = Instance.new("UIListLayout", ChatLog)
+UIList.Padding = UDim.new(0, 4)
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
+
+local userScrolledUp = false
+local lastCanvasY = 0
+
+ChatLog:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+    local canvas = ChatLog.CanvasPosition.Y
+    local maxY = ChatLog.AbsoluteCanvasSize.Y - ChatLog.AbsoluteSize.Y
+    if maxY <= 0 then
+        userScrolledUp = false
+    else
+        if canvas >= maxY - 10 then
+            userScrolledUp = false
+        elseif canvas < lastCanvasY - 15 then
+            userScrolledUp = true
+        end
+    end
+    lastCanvasY = canvas
+end)
+
+local t25 = {
+    value84=nil, value85=nil, value86=nil, value87=nil, value88=nil,
+    value89=nil, value90=nil, value91=nil, value92=nil, value95=nil,
+    value96=nil, value97=nil, value81=nil, value82=nil, value83=nil,
+    value138={}, value139=0, value140=nil, value141=false, value142=false,
+    value143=false, value144=0, value146=nil, value147=false, value148=false,
+    value153=false, value154="",
+    value168=function() end, value165=function() end, value166=function() end,
+    value167=function() end, value169=function() end, value173=function() end,
+}
+
+local MusicPage = Instance.new("Frame", Pages)
+MusicPage.Size = UDim2.new(1, 0, 1, 0)
+MusicPage.BackgroundTransparency = 1
+MusicPage.Visible = false
+
+local MusicSearchFrame = Instance.new("Frame", MusicPage)
+MusicSearchFrame.Size = UDim2.new(1, -10, 0, 34)
+MusicSearchFrame.Position = UDim2.new(0, 5, 0, 4)
+MusicSearchFrame.BackgroundColor3 = PiratesTheme.cardBg
+MusicSearchFrame.BackgroundTransparency = 0.05
+MusicSearchFrame.BorderSizePixel = 0
+Instance.new("UICorner", MusicSearchFrame).CornerRadius = UDim.new(0, 8)
+
+t25.value81 = Instance.new("TextBox", MusicSearchFrame)
+t25.value81.Size = UDim2.new(1, -70, 1, 0)
+t25.value81.Position = UDim2.new(0, 8, 0, 0)
+t25.value81.BackgroundTransparency = 1
+t25.value81.PlaceholderText = "Search SoundCloud..."
+t25.value81.PlaceholderColor3 = PiratesTheme.subText
+t25.value81.Text = ""
+t25.value81.TextColor3 = PiratesTheme.text
+t25.value81.Font = Enum.Font.Gotham
+t25.value81.TextSize = 11
+t25.value81.ClearTextOnFocus = false
+
+t25.value82 = Instance.new("TextButton", MusicSearchFrame)
+t25.value82.Size = UDim2.new(0, 50, 1, -6)
+t25.value82.Position = UDim2.new(1, -55, 0, 3)
+t25.value82.BackgroundColor3 = PiratesTheme.accent
+t25.value82.BorderSizePixel = 0
+t25.value82.Text = "🔍"
+t25.value82.TextColor3 = Color3.new(1, 1, 1)
+t25.value82.Font = Enum.Font.GothamBold
+t25.value82.TextSize = 14
+Instance.new("UICorner", t25.value82).CornerRadius = UDim.new(0, 6)
+
+t25.value86 = Instance.new("ScrollingFrame", MusicPage)
+t25.value86.Size = UDim2.new(1, -10, 1, -90)
+t25.value86.Position = UDim2.new(0, 5, 0, 42)
+t25.value86.BackgroundTransparency = 1
+t25.value86.ScrollBarThickness = 3
+t25.value86.ScrollBarImageColor3 = PiratesTheme.accent
+t25.value86.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Instance.new("UIListLayout", t25.value86).Padding = UDim.new(0, 4)
+
+local NowPlayingFrame = Instance.new("Frame", MusicPage)
+NowPlayingFrame.Size = UDim2.new(1, -10, 0, 42)
+NowPlayingFrame.Position = UDim2.new(0, 5, 1, -46)
+NowPlayingFrame.BackgroundColor3 = PiratesTheme.accent
+NowPlayingFrame.BackgroundTransparency = 0.1
+NowPlayingFrame.BorderSizePixel = 0
+NowPlayingFrame.Visible = false
+Instance.new("UICorner", NowPlayingFrame).CornerRadius = UDim.new(0, 8)
+
+t25.value87 = Instance.new("TextLabel", NowPlayingFrame)
+t25.value87.Size = UDim2.new(1, -10, 0, 16)
+t25.value87.Position = UDim2.new(0, 5, 0, 2)
+t25.value87.BackgroundTransparency = 1
+t25.value87.Text = "🎵 No song selected"
+t25.value87.TextColor3 = Color3.new(1, 1, 1)
+t25.value87.Font = Enum.Font.GothamBold
+t25.value87.TextSize = 9
+t25.value87.TextXAlignment = Enum.TextXAlignment.Left
+t25.value87.TextTruncate = Enum.TextTruncate.AtEnd
+
+t25.value88 = Instance.new("TextLabel", NowPlayingFrame)
+t25.value88.Size = UDim2.new(1, -10, 0, 12)
+t25.value88.Position = UDim2.new(0, 5, 0, 17)
+t25.value88.BackgroundTransparency = 1
+t25.value88.Text = "Duration: 0:00"
+t25.value88.TextColor3 = Color3.fromRGB(220, 230, 255)
+t25.value88.Font = Enum.Font.Gotham
+t25.value88.TextSize = 8
+t25.value88.TextXAlignment = Enum.TextXAlignment.Left
+
+t25.value95 = Instance.new("TextLabel", NowPlayingFrame)
+t25.value95.Size = UDim2.new(0, 35, 0, 10)
+t25.value95.Position = UDim2.new(0, 5, 1, -12)
+t25.value95.BackgroundTransparency = 1
+t25.value95.Text = "0:00"
+t25.value95.TextColor3 = Color3.fromRGB(210, 220, 240)
+t25.value95.Font = Enum.Font.Gotham
+t25.value95.TextSize = 8
+t25.value95.Visible = false
+
+t25.value96 = Instance.new("TextLabel", NowPlayingFrame)
+t25.value96.Size = UDim2.new(0, 35, 0, 10)
+t25.value96.Position = UDim2.new(1, -40, 1, -12)
+t25.value96.BackgroundTransparency = 1
+t25.value96.Text = "0:00"
+t25.value96.TextColor3 = Color3.fromRGB(210, 220, 240)
+t25.value96.Font = Enum.Font.Gotham
+t25.value96.TextSize = 8
+t25.value96.Visible = false
+
+t25.value90 = Instance.new("Frame", NowPlayingFrame)
+t25.value90.Size = UDim2.new(1, -100, 0, 4)
+t25.value90.Position = UDim2.new(0, 45, 1, -9)
+t25.value90.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+t25.value90.BackgroundTransparency = 0.5
+t25.value90.BorderSizePixel = 0
+t25.value90.Visible = false
+Instance.new("UICorner", t25.value90).CornerRadius = UDim.new(1, 0)
+
+t25.value91 = Instance.new("Frame", t25.value90)
+t25.value91.Size = UDim2.new(0, 0, 1, 0)
+t25.value91.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+t25.value91.BorderSizePixel = 0
+Instance.new("UICorner", t25.value91).CornerRadius = UDim.new(1, 0)
+
+t25.value92 = Instance.new("Frame", t25.value90)
+t25.value92.Size = UDim2.new(0, 8, 0, 8)
+t25.value92.Position = UDim2.new(0, 0, 0.5, -4)
+t25.value92.BackgroundColor3 = Color3.new(1, 1, 1)
+t25.value92.BorderSizePixel = 0
+t25.value92.Visible = false
+Instance.new("UICorner", t25.value92).CornerRadius = UDim.new(1, 0)
+
+t25.value89 = Instance.new("TextButton", NowPlayingFrame)
+t25.value89.Size = UDim2.new(0, 95, 0, 22)
+t25.value89.Position = UDim2.new(1, -100, 0, 2)
+t25.value89.BackgroundColor3 = Color3.fromRGB(30, 215, 96)
+t25.value89.TextColor3 = Color3.new(1, 1, 1)
+t25.value89.Text = "▶ Play & Broadcast"
+t25.value89.Font = Enum.Font.GothamBold
+t25.value89.TextSize = 9
+t25.value89.ZIndex = 2
+Instance.new("UICorner", t25.value89).CornerRadius = UDim.new(0, 5)
+
+local StopMusicBtn = Instance.new("TextButton", NowPlayingFrame)
+StopMusicBtn.Size = UDim2.new(0, 45, 0, 18)
+StopMusicBtn.Position = UDim2.new(1, -50, 1, -20)
+StopMusicBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+StopMusicBtn.TextColor3 = Color3.new(1, 1, 1)
+StopMusicBtn.Text = "⏹ Stop"
+StopMusicBtn.Font = Enum.Font.GothamBold
+StopMusicBtn.TextSize = 8
+Instance.new("UICorner", StopMusicBtn).CornerRadius = UDim.new(0, 5)
+
+local VolDownBtn = Instance.new("TextButton", NowPlayingFrame)
+VolDownBtn.Size = UDim2.new(0, 20, 0, 18)
+VolDownBtn.Position = UDim2.new(0, 5, 1, -20)
+VolDownBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+VolDownBtn.BackgroundTransparency = 0.75
+VolDownBtn.BorderSizePixel = 0
+VolDownBtn.Text = "🔉"
+VolDownBtn.TextColor3 = Color3.new(1, 1, 1)
+VolDownBtn.Font = Enum.Font.GothamBold
+VolDownBtn.TextSize = 10
+Instance.new("UICorner", VolDownBtn).CornerRadius = UDim.new(0, 5)
+
+t25.value97 = Instance.new("TextLabel", NowPlayingFrame)
+t25.value97.Size = UDim2.new(0, 35, 0, 18)
+t25.value97.Position = UDim2.new(0, 27, 1, -20)
+t25.value97.BackgroundTransparency = 1
+t25.value97.Text = "50%"
+t25.value97.TextColor3 = Color3.new(1, 1, 1)
+t25.value97.Font = Enum.Font.GothamBold
+t25.value97.TextSize = 8
+
+local VolUpBtn = Instance.new("TextButton", NowPlayingFrame)
+VolUpBtn.Size = UDim2.new(0, 20, 0, 18)
+VolUpBtn.Position = UDim2.new(0, 64, 1, -20)
+VolUpBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+VolUpBtn.BackgroundTransparency = 0.75
+VolUpBtn.BorderSizePixel = 0
+VolUpBtn.Text = "🔊"
+VolUpBtn.TextColor3 = Color3.new(1, 1, 1)
+VolUpBtn.Font = Enum.Font.GothamBold
+VolUpBtn.TextSize = 10
+Instance.new("UICorner", VolUpBtn).CornerRadius = UDim.new(0, 5)
+
+local PrevBtn = Instance.new("TextButton", NowPlayingFrame)
+PrevBtn.Size = UDim2.new(0, 24, 0, 18)
+PrevBtn.Position = UDim2.new(1, -80, 1, -20)
+PrevBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 44)
+PrevBtn.TextColor3 = Color3.new(1, 1, 1)
+PrevBtn.Text = "⏮"
+PrevBtn.Font = Enum.Font.GothamBold
+PrevBtn.TextSize = 10
+Instance.new("UICorner", PrevBtn).CornerRadius = UDim.new(0, 4)
+
+local NextBtn = Instance.new("TextButton", NowPlayingFrame)
+NextBtn.Size = UDim2.new(0, 24, 0, 18)
+NextBtn.Position = UDim2.new(1, -52, 1, -20)
+NextBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 44)
+NextBtn.TextColor3 = Color3.new(1, 1, 1)
+NextBtn.Text = "⏭"
+NextBtn.Font = Enum.Font.GothamBold
+NextBtn.TextSize = 10
+Instance.new("UICorner", NextBtn).CornerRadius = UDim.new(0, 4)
+
+VolDownBtn.MouseButton1Click:Connect(function()
+    currentVolume = math.max(0, currentVolume - 0.1)
+    t25.value97.Text = math.floor(currentVolume * 100).."%"
+    if MusicPlayer then MusicPlayer.Volume = currentVolume end
+end)
+VolUpBtn.MouseButton1Click:Connect(function()
+    currentVolume = math.min(1, currentVolume + 0.1)
+    t25.value97.Text = math.floor(currentVolume * 100).."%"
+    if MusicPlayer then MusicPlayer.Volume = currentVolume end
+end)
+
+local PFPPAGEPage = Instance.new("Frame", Pages)
+PFPPAGEPage.Size = UDim2.new(1, 0, 1, 0)
+PFPPAGEPage.BackgroundTransparency = 1
+PFPPAGEPage.Visible = false
+
+local PFPInfo = Instance.new("TextLabel", PFPPAGEPage)
+PFPInfo.Size = UDim2.new(1, -10, 0, 20)
+PFPInfo.Position = UDim2.new(0, 5, 0, 2)
+PFPInfo.BackgroundTransparency = 1
+PFPInfo.Text = "🖼️ Tap avatar to set your PFP"
+PFPInfo.TextColor3 = PiratesTheme.text
+PFPInfo.Font = Enum.Font.GothamBold
+PFPInfo.TextSize = 10
+PFPInfo.TextXAlignment = Enum.TextXAlignment.Left
+
+local PFPScroll = Instance.new("ScrollingFrame", PFPPAGEPage)
+PFPScroll.Size = UDim2.new(1, -10, 1, -50)
+PFPScroll.Position = UDim2.new(0, 5, 0, 26)
+PFPScroll.BackgroundTransparency = 1
+PFPScroll.ScrollBarThickness = 3
+PFPScroll.ScrollBarImageColor3 = PiratesTheme.accent
+PFPScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local PFPCustomFrame = Instance.new("Frame", PFPPAGEPage)
+PFPCustomFrame.Size = UDim2.new(1, -10, 0, 30)
+PFPCustomFrame.Position = UDim2.new(0, 5, 1, -34)
+PFPCustomFrame.BackgroundColor3 = PiratesTheme.cardBg
+PFPCustomFrame.BackgroundTransparency = 0.05
+PFPCustomFrame.BorderSizePixel = 0
+Instance.new("UICorner", PFPCustomFrame).CornerRadius = UDim.new(0, 6)
+
+local PFPCustomInput = Instance.new("TextBox", PFPCustomFrame)
+PFPCustomInput.Size = UDim2.new(1, -70, 1, 0)
+PFPCustomInput.Position = UDim2.new(0, 8, 0, 0)
+PFPCustomInput.BackgroundTransparency = 1
+PFPCustomInput.PlaceholderText = "Or paste Roblox asset ID..."
+PFPCustomInput.PlaceholderColor3 = PiratesTheme.subText
+PFPCustomInput.Text = ""
+PFPCustomInput.TextColor3 = PiratesTheme.text
+PFPCustomInput.Font = Enum.Font.Gotham
+PFPCustomInput.TextSize = 10
+PFPCustomInput.ClearTextOnFocus = false
+
+local PFPCustomBtn = Instance.new("TextButton", PFPCustomFrame)
+PFPCustomBtn.Size = UDim2.new(0, 56, 1, -6)
+PFPCustomBtn.Position = UDim2.new(1, -60, 0, 3)
+PFPCustomBtn.BackgroundColor3 = PiratesTheme.accent
+PFPCustomBtn.BorderSizePixel = 0
+PFPCustomBtn.Text = "SET"
+PFPCustomBtn.TextColor3 = Color3.new(1, 1, 1)
+PFPCustomBtn.Font = Enum.Font.GothamBold
+PFPCustomBtn.TextSize = 10
+Instance.new("UICorner", PFPCustomBtn).CornerRadius = UDim.new(0, 6)
+
+local PFP_GALLERY = {
+    {name="Dark Bun",     id="rbxassetid://7733960981"},
+    {name="Monster",      id="rbxassetid://7733991422"},
+    {name="Purple Lips",  id="rbxassetid://7734037061"},
+    {name="Peace Sign",   id="rbxassetid://7734068321"},
+    {name="Pink Bow",     id="rbxassetid://7734078648"},
+    {name="Star Boy",     id="rbxassetid://7734088950"},
+    {name="X Scar",       id="rbxassetid://7734107163"},
+    {name="Blue Flame",   id="rbxassetid://7734127293"},
+    {name="Blue Eyes",    id="rbxassetid://7734141256"},
+    {name="Purple Laugh", id="rbxassetid://7734152943"},
+    {name="Red Glitch",   id="rbxassetid://7734164429"},
+    {name="Shiva",        id="rbxassetid://7734176273"},
+    {name="Shiba",        id="rbxassetid://7734189060"},
+    {name="Dog Grin",     id="rbxassetid://7734200680"},
+    {name="Kitten Rose",  id="rbxassetid://7734212794"},
+    {name="Extra",        id="rbxassetid://7734225163"},
+}
+
+local PFPGrid = Instance.new("Frame", PFPScroll)
+PFPGrid.Size = UDim2.new(1, 0, 0, 500)
+PFPGrid.BackgroundTransparency = 1
+local pfpGridLayout = Instance.new("UIGridLayout", PFPGrid)
+pfpGridLayout.CellSize = UDim2.new(0, 68, 0, 90)
+pfpGridLayout.CellPadding = UDim2.new(0, 6, 0, 6)
+pfpGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function applyPFP(assetId, name)
+    savePFP(RealUserId, assetId)
+    CustomPFP[RealUserId] = assetId
+    showNotif("✅ PFP set: "..(name or "custom"))
+end
+
+for i, pfp in ipairs(PFP_GALLERY) do
+    local cell = Instance.new("Frame", PFPGrid)
+    cell.BackgroundTransparency = 1
+    cell.LayoutOrder = i
+
+    local btn = Instance.new("TextButton", cell)
+    btn.Size = UDim2.new(1, 0, 0, 68)
+    btn.BackgroundColor3 = PiratesTheme.cardBg
+    btn.BackgroundTransparency = 0
+    btn.BorderSizePixel = 0
+    btn.Text = ""
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+    local bst = Instance.new("UIStroke", btn)
+    bst.Color = PiratesTheme.accent; bst.Thickness = 1; bst.Transparency = 0.4
+
+    local img = Instance.new("ImageLabel", btn)
+    img.Size = UDim2.new(1, -4, 1, -4)
+    img.Position = UDim2.new(0, 2, 0, 2)
+    img.BackgroundTransparency = 1
+    img.Image = pfp.id
+    Instance.new("UICorner", img).CornerRadius = UDim.new(0, 8)
+
+    local nameLbl = Instance.new("TextLabel", cell)
+    nameLbl.Size = UDim2.new(1, 0, 0, 16)
+    nameLbl.Position = UDim2.new(0, 0, 0, 70)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text = pfp.name
+    nameLbl.TextColor3 = PiratesTheme.text
+    nameLbl.Font = Enum.Font.Gotham
+    nameLbl.TextSize = 8
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    btn.MouseButton1Click:Connect(function()
+        applyPFP(pfp.id, pfp.name)
+    end)
+end
+
+PFPCustomBtn.MouseButton1Click:Connect(function()
+    local txt = PFPCustomInput.Text:gsub("%s+", "")
+    if txt == "" then return end
+    local asset
+    if txt:find("rbxassetid://") then asset = txt else asset = "rbxassetid://"..txt end
+    applyPFP(asset, "custom")
+    PFPCustomInput.Text = ""
+end)
+
+local ThemePage = Instance.new("Frame", Pages)
+ThemePage.Size = UDim2.new(1, 0, 1, 0)
+ThemePage.BackgroundTransparency = 1
+ThemePage.Visible = false
+
+local ThemeInfo = Instance.new("TextLabel", ThemePage)
+ThemeInfo.Size = UDim2.new(1, -10, 0, 24)
+ThemeInfo.Position = UDim2.new(0, 5, 0, 4)
+ThemeInfo.BackgroundTransparency = 1
+ThemeInfo.Text = "🎨 CHOOSE PIRATES COLOR"
+ThemeInfo.TextColor3 = PiratesTheme.text
+ThemeInfo.Font = Enum.Font.GothamBold
+ThemeInfo.TextSize = 11
+ThemeInfo.TextXAlignment = Enum.TextXAlignment.Left
+
+local ThemeColors = {
+    {name="Obsidian", main=Color3.fromRGB(16,17,24), header=Color3.fromRGB(24,26,36), card=Color3.fromRGB(30,32,44), accent=Color3.fromRGB(124,92,255), text=Color3.fromRGB(238,240,248)},
+    {name="Midnight", main=Color3.fromRGB(12,18,30), header=Color3.fromRGB(18,28,46), card=Color3.fromRGB(24,36,58), accent=Color3.fromRGB(56,165,255), text=Color3.fromRGB(235,242,255)},
+    {name="Crimson", main=Color3.fromRGB(24,14,18), header=Color3.fromRGB(38,20,26), card=Color3.fromRGB(48,26,34), accent=Color3.fromRGB(235,65,95), text=Color3.fromRGB(255,235,240)},
+    {name="Emerald", main=Color3.fromRGB(13,22,19), header=Color3.fromRGB(20,34,29), card=Color3.fromRGB(26,44,38), accent=Color3.fromRGB(40,205,130), text=Color3.fromRGB(232,255,245)},
+    {name="Void Gold", main=Color3.fromRGB(22,20,14), header=Color3.fromRGB(34,30,20), card=Color3.fromRGB(44,39,26), accent=Color3.fromRGB(235,185,55), text=Color3.fromRGB(255,248,230)},
+    {name="Cyber Pink", main=Color3.fromRGB(24,14,24), header=Color3.fromRGB(38,20,38), card=Color3.fromRGB(48,26,48), accent=Color3.fromRGB(255,75,175), text=Color3.fromRGB(255,235,248)},
+    {name="Abyss Cyan", main=Color3.fromRGB(12,22,26), header=Color3.fromRGB(18,34,40), card=Color3.fromRGB(24,44,52), accent=Color3.fromRGB(35,215,230), text=Color3.fromRGB(230,252,255)},
+    {name="Shadow", main=Color3.fromRGB(14,14,14), header=Color3.fromRGB(24,24,24), card=Color3.fromRGB(34,34,34), accent=Color3.fromRGB(160,160,175), text=Color3.fromRGB(240,240,240)},
+    {name="Sky Blue", main=Color3.fromRGB(200,230,255), header=Color3.fromRGB(100,185,255), card=Color3.fromRGB(255,255,255), accent=Color3.fromRGB(60,140,255), text=Color3.fromRGB(20,55,100)},
+    {name="Pink", main=Color3.fromRGB(255,220,240), header=Color3.fromRGB(255,130,180), card=Color3.fromRGB(255,255,255), accent=Color3.fromRGB(255,80,150), text=Color3.fromRGB(90,25,55)},
+    {name="Purple", main=Color3.fromRGB(225,210,255), header=Color3.fromRGB(160,120,255), card=Color3.fromRGB(255,255,255), accent=Color3.fromRGB(130,80,255), text=Color3.fromRGB(45,25,95)},
+    {name="Mint", main=Color3.fromRGB(220,255,240), header=Color3.fromRGB(100,220,180), card=Color3.fromRGB(255,255,255), accent=Color3.fromRGB(60,190,150), text=Color3.fromRGB(20,75,55)},
+}
+
+local ThemeGrid = Instance.new("Frame", ThemePage)
+ThemeGrid.Size = UDim2.new(1, -10, 1, -40)
+ThemeGrid.Position = UDim2.new(0, 5, 0, 32)
+ThemeGrid.BackgroundTransparency = 1
+
+local TGList = Instance.new("UIListLayout", ThemeGrid)
+TGList.FillDirection = Enum.FillDirection.Horizontal
+TGList.Padding = UDim.new(0, 5)
+TGList.SortOrder = Enum.SortOrder.LayoutOrder
+TGList.Wraps = true
+
+local function applyPiratesTheme(t)
+    PiratesTheme.mainBg = t.main
+    PiratesTheme.headerBg = t.header
+    PiratesTheme.cardBg = t.card or Color3.fromRGB(30,32,44)
+    PiratesTheme.accent = t.accent
+    PiratesTheme.text = t.text or Color3.fromRGB(238,240,248)
+    Main.BackgroundColor3 = t.main
+    Header.BackgroundColor3 = t.header
+    HeaderFix.BackgroundColor3 = t.header
+    t25.value82.BackgroundColor3 = t.accent
+    NowPlayingFrame.BackgroundColor3 = t.accent
+    PFPCustomBtn.BackgroundColor3 = t.accent
+    for _, b in ipairs(TabBar:GetChildren()) do
+        if b:IsA("TextButton") then
+            b.TextColor3 = PiratesTheme.text
+            b.BackgroundColor3 = PiratesTheme.cardBg
+        end
+    end
+    for _, b in ipairs(TabBar:GetChildren()) do
+        if b:IsA("TextButton") and b.BackgroundTransparency == 0 then
+            b.BackgroundColor3 = t.accent
+            b.TextColor3 = Color3.new(1,1,1)
+        end
+    end
+end
+
+for i, t in ipairs(ThemeColors) do
+    local tb = Instance.new("TextButton", ThemeGrid)
+    tb.Size = UDim2.new(0, 72, 0, 46)
+    tb.LayoutOrder = i
+    tb.BackgroundColor3 = t.header
+    tb.BorderSizePixel = 0
+    tb.Text = t.name
+    tb.TextColor3 = Color3.new(1, 1, 1)
+    tb.Font = Enum.Font.GothamBold
+    tb.TextSize = 9
+    tb.TextWrapped = true
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 8)
+    local tbst = Instance.new("UIStroke", tb)
+    tbst.Color = t.accent; tbst.Thickness = 1
+    tb.MouseButton1Click:Connect(function()
+        applyPiratesTheme(t)
+        saveTheme()
+        showNotif("🎨 Theme: "..t.name)
+    end)
+end
+
+local PanelPage = Instance.new("Frame", Pages)
+PanelPage.Size = UDim2.new(1, 0, 1, 0)
+PanelPage.BackgroundTransparency = 1
+PanelPage.Visible = false
+
+local PanelScroll = Instance.new("ScrollingFrame", PanelPage)
+PanelScroll.Size = UDim2.new(1, -10, 1, -4)
+PanelScroll.Position = UDim2.new(0, 5, 0, 2)
+PanelScroll.BackgroundTransparency = 1
+PanelScroll.ScrollBarThickness = 3
+PanelScroll.ScrollBarImageColor3 = PiratesTheme.accent
+PanelScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+local PanelLayout = Instance.new("UIListLayout", PanelScroll)
+PanelLayout.Padding = UDim.new(0, 5)
+PanelLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function switchPage(page)
+    for _, c in ipairs(Pages:GetChildren()) do
+        if c:IsA("Frame") then c.Visible = false end
+    end
+    if page == "chat" then ChatPage.Visible = true
+    elseif page == "music" and isAdmin then MusicPage.Visible = true
+    elseif page == "pfp" then PFPPAGEPage.Visible = true
+    elseif page == "theme" then ThemePage.Visible = true
+    elseif page == "panel" and isAdmin then PanelPage.Visible = true end
+end
+
+setTabActive(ChatTabBtn)
+ChatTabBtn.MouseButton1Click:Connect(function() setTabActive(ChatTabBtn); switchPage("chat") end)
+if MusicTabBtn then
+    MusicTabBtn.MouseButton1Click:Connect(function() setTabActive(MusicTabBtn); switchPage("music") end)
+end
+PFPTabBtn.MouseButton1Click:Connect(function() setTabActive(PFPTabBtn); switchPage("pfp") end)
+ThemeTabBtn.MouseButton1Click:Connect(function() setTabActive(ThemeTabBtn); switchPage("theme") end)
+if AdminTabBtn then
+    AdminTabBtn.MouseButton1Click:Connect(function() setTabActive(AdminTabBtn); switchPage("panel") end)
+end
+
+local Divider = Instance.new("Frame", Main)
+Divider.Size = UDim2.new(1, -10, 0, 1)
+Divider.Position = UDim2.new(0, 5, 1, -42)
+Divider.BackgroundColor3 = PiratesTheme.accent
+Divider.BackgroundTransparency = 0.4
+Divider.BorderSizePixel = 0
+
+local ReplyBanner = Instance.new("Frame", Main)
+ReplyBanner.Size = UDim2.new(1, -10, 0, 20)
+ReplyBanner.Position = UDim2.new(0, 5, 1, -64)
+ReplyBanner.BackgroundColor3 = PiratesTheme.cardBg
+ReplyBanner.BackgroundTransparency = 0.05
+ReplyBanner.BorderSizePixel = 0
+ReplyBanner.Visible = false
+Instance.new("UICorner", ReplyBanner).CornerRadius = UDim.new(0, 6)
+
+local ReplyLabel = Instance.new("TextLabel", ReplyBanner)
+ReplyLabel.Size = UDim2.new(1, -30, 1, 0); ReplyLabel.Position = UDim2.new(0, 8, 0, 0)
+ReplyLabel.BackgroundTransparency = 1; ReplyLabel.Text = "Replying to ..."
+ReplyLabel.TextColor3 = PiratesTheme.text; ReplyLabel.Font = Enum.Font.Gotham; ReplyLabel.TextSize = 10
+ReplyLabel.TextXAlignment = Enum.TextXAlignment.Left; ReplyLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+local ReplyClose = Instance.new("TextButton", ReplyBanner)
+ReplyClose.Size = UDim2.new(0, 20, 0, 20); ReplyClose.Position = UDim2.new(1, -22, 0, 0)
+ReplyClose.Text = "✕"; ReplyClose.Font = Enum.Font.GothamBold; ReplyClose.TextSize = 10
+ReplyClose.BackgroundTransparency = 1; ReplyClose.TextColor3 = PiratesTheme.text
+ReplyClose.MouseButton1Click:Connect(function()
+    ReplyTargetName = nil; ReplyTargetMsg = nil; ReplyBanner.Visible = false
+end)
+
+-- ============================================================
+-- INPUT AREA + STICKERS
+-- ============================================================
+local InputArea = Instance.new("Frame", Main)
+InputArea.Size = UDim2.new(1, -10, 0, 36)
+InputArea.Position = UDim2.new(0, 5, 1, -38)
+InputArea.BackgroundColor3 = PiratesTheme.cardBg
+InputArea.BackgroundTransparency = 0.05
+InputArea.BorderSizePixel = 0
+Instance.new("UICorner", InputArea).CornerRadius = UDim.new(0, 12)
+
+local StickerBtn = Instance.new("TextButton", InputArea)
+StickerBtn.Size = UDim2.new(0, 26, 0, 26)
+StickerBtn.Position = UDim2.new(0, 5, 0.5, -13)
+StickerBtn.BackgroundColor3 = PiratesTheme.accent
+StickerBtn.BorderSizePixel = 0
+StickerBtn.Text = "📷"
+StickerBtn.TextColor3 = Color3.new(1,1,1)
+StickerBtn.Font = Enum.Font.GothamBold
+StickerBtn.TextSize = 14
+StickerBtn.ZIndex = 3
+Instance.new("UICorner", StickerBtn).CornerRadius = UDim.new(0, 8)
+
+local Input = Instance.new("TextBox", InputArea)
+Input.Size = UDim2.new(1, -80, 1, 0); Input.Position = UDim2.new(0, 36, 0, 0)
+Input.BackgroundTransparency = 1; Input.PlaceholderText = "Message..."
+Input.Text = ""; Input.TextColor3 = PiratesTheme.text
+Input.PlaceholderColor3 = PiratesTheme.subText
+Input.Font = Enum.Font.Gotham; Input.TextSize = 11; Input.ClearTextOnFocus = false
+
+local SendBtn = Instance.new("TextButton", InputArea)
+SendBtn.Size = UDim2.new(0, 32, 0, 28); SendBtn.Position = UDim2.new(1, -36, 0.5, -14)
+SendBtn.BackgroundColor3 = PiratesTheme.accent; SendBtn.BorderSizePixel = 0
+SendBtn.Text = "▶"; SendBtn.TextColor3 = Color3.new(1, 1, 1)
+SendBtn.Font = Enum.Font.GothamBold; SendBtn.TextSize = 12
+Instance.new("UICorner", SendBtn).CornerRadius = UDim.new(0, 8)
+
+local STICKER_IDS = {
+    129040222524985,124145396344946,77449075537615,86278563388796,71442089462191,
+    113540856419753,98946997706325,87239554144904,75030286063678,83671542566237,
+    115062400395026,136413255954959,91965007204396,135700976643537,74143981281416,
+    128965568153551,105612301516352,81437059666138,96930545429149,107679067587993,
+    90357041968118,106503865025496,107949395268622,95112780943766,90286953844894,
+    100722574482118,108550928457595,111616336841381,72793460663497,97531898393056,
+    124047412639555,86402817297314,108283809544243,76757365751988,134676873059671,
+    130819442854007,108796531608917,87693756574279,107991336904158,102923210652647,
+    85407192167743,127600871692693,116671713835756,91554946838716,129299999390074,
+    112947637609310,9535816766,113433225859507,129716842531162,120533300214549,
+    121648840999566,18260819726,16199278981,17597703320,13166065031,
+    120578004452417,12729122625,9897741285,130121292590990,14036814111,
+    128535076379472,12410868506,88936593668553,100088928101922,16450680734,
+    12028496352,12028382065,18974318836,86247165299072,16172341273,
+    81322691393605,14107602842,124905421403275,104386409157529,96811408303163,
+    94625331166483,92064377599037,103845863474380,90727287236387,7530801913,
+    14412069881,88780855152800,71992024065641,16022747924,84406977929953,
+    139094555259200,17894229494,96463708021010,17883713384,18355912002,
+    10180536602,11818627075,9142678957,11623459250,2245118763,
+    2094272667,12053823662,5292514021,2790989672,3072000000,
+    11648246819,10149736922,1049903144,5663084305,14790980059,
+    10982686736,6754961478,6892957751,14334644220,7118722842,
+}
+
+local StickerPanel = Instance.new("Frame", Main)
+StickerPanel.Size = UDim2.new(1, -10, 0, 0)
+StickerPanel.Position = UDim2.new(0, 5, 1, -200)
+StickerPanel.BackgroundColor3 = PiratesTheme.headerBg
+StickerPanel.BackgroundTransparency = 0.02
+StickerPanel.BorderSizePixel = 0
+StickerPanel.Visible = false
+StickerPanel.ZIndex = 150
+StickerPanel.ClipsDescendants = true
+Instance.new("UICorner", StickerPanel).CornerRadius = UDim.new(0, 12)
+local StickerStroke = Instance.new("UIStroke", StickerPanel); StickerStroke.Color = PiratesTheme.accent; StickerStroke.Thickness = 1.5
+
+local StickerHeader = Instance.new("TextLabel", StickerPanel)
+StickerHeader.Size = UDim2.new(1, -40, 0, 20); StickerHeader.Position = UDim2.new(0, 8, 0, 2)
+StickerHeader.BackgroundTransparency = 1; StickerHeader.Text = "🎨 STICKERS"
+StickerHeader.TextColor3 = PiratesTheme.accent; StickerHeader.Font = Enum.Font.GothamBold
+StickerHeader.TextSize = 10; StickerHeader.TextXAlignment = Enum.TextXAlignment.Left; StickerHeader.ZIndex = 151
+
+local StickerClose = Instance.new("TextButton", StickerPanel)
+StickerClose.Size = UDim2.new(0, 20, 0, 20); StickerClose.Position = UDim2.new(1, -24, 0, 2)
+StickerClose.BackgroundTransparency = 1; StickerClose.Text = "✕"
+StickerClose.TextColor3 = Color3.fromRGB(235,80,80); StickerClose.Font = Enum.Font.GothamBold
+StickerClose.TextSize = 12; StickerClose.ZIndex = 151
+
+local StickerScroll = Instance.new("ScrollingFrame", StickerPanel)
+StickerScroll.Size = UDim2.new(1, -8, 1, -24); StickerScroll.Position = UDim2.new(0, 4, 0, 22)
+StickerScroll.BackgroundTransparency = 1; StickerScroll.ScrollBarThickness = 3
+StickerScroll.ScrollBarImageColor3 = PiratesTheme.accent
+StickerScroll.CanvasSize = UDim2.new(0, 0, 0, 0); StickerScroll.ZIndex = 151
+
+local sgl = Instance.new("UIGridLayout", StickerScroll)
+sgl.CellSize = UDim2.new(0, 56, 0, 56)
+sgl.CellPadding = UDim2.new(0, 4, 0, 4)
+sgl.SortOrder = Enum.SortOrder.LayoutOrder
+
+local addMessage
+
+for i, sid in ipairs(STICKER_IDS) do
+    local sb = Instance.new("ImageButton", StickerScroll)
+    sb.Size = UDim2.new(0, 56, 0, 56)
+    sb.BackgroundColor3 = PiratesTheme.cardBg
+    sb.BackgroundTransparency = 0; sb.BorderSizePixel = 0
+    sb.ScaleType = Enum.ScaleType.Fit
+    sb.Image = "rbxthumb://type=Asset&id="..tostring(sid).."&w=150&h=150"
+    sb.LayoutOrder = i; sb.ZIndex = 152
+    Instance.new("UICorner", sb).CornerRadius = UDim.new(0, 8)
+    local sbst = Instance.new("UIStroke", sb)
+    sbst.Color = PiratesTheme.accent; sbst.Thickness = 1; sbst.Transparency = 0.5
+
+    sb.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            local msg = "[STICKER:"..tostring(sid).."]"
+            local timestamp = string.format("%012d", os.time())..math.random(100,999)
+            processedKeys[timestamp] = true
+            addMessage(RealDisplayName, msg, false, tonumber(timestamp) or 0, RealUserId, false, false, nil)
+            pcall(function()
+                fbReq({Url=DATABASE_URL.."/"..timestamp..".json", Method="PUT", Headers={["Content-Type"]="application/json"}, Body=HttpService:JSONEncode({Sender=RealDisplayName, SenderUid=RealUserId, Content=msg, IsSystem=false})})
+            end)
+        end)
+        TweenService:Create(StickerPanel, TweenInfo.new(0.2), {Size = UDim2.new(1,-10,0,0)}):Play()
+        task.delay(0.2, function() StickerPanel.Visible = false end)
+    end)
+end
+
+task.spawn(function()
+    task.wait(0.3)
+    StickerScroll.CanvasSize = UDim2.new(0, 0, 0, sgl.AbsoluteContentSize.Y + 10)
+end)
+
+StickerBtn.MouseButton1Click:Connect(function()
+    if StickerPanel.Visible then
+        TweenService:Create(StickerPanel, TweenInfo.new(0.2), {Size = UDim2.new(1,-10,0,0)}):Play()
+        task.delay(0.2, function() StickerPanel.Visible = false end)
+    else
+        StickerPanel.Visible = true
+        StickerPanel.Size = UDim2.new(1, -10, 0, 0)
+        TweenService:Create(StickerPanel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+            {Size = UDim2.new(1, -10, 0, 200)}):Play()
+    end
+end)
+StickerClose.MouseButton1Click:Connect(function()
+    TweenService:Create(StickerPanel, TweenInfo.new(0.2), {Size = UDim2.new(1,-10,0,0)}):Play()
+    task.delay(0.2, function() StickerPanel.Visible = false end)
+end)
+
+-- ============================================================
+-- MESSAGE POPUP & LOG
+-- ============================================================
+local MsgPopup = Instance.new("Frame", ScreenGui)
+MsgPopup.Size = UDim2.new(0, 150, 0, 0)
+MsgPopup.BackgroundColor3 = PiratesTheme.headerBg
+MsgPopup.BackgroundTransparency = 0.02
+MsgPopup.BorderSizePixel = 0
+MsgPopup.ZIndex = 200
+MsgPopup.Visible = false
+MsgPopup.AutomaticSize = Enum.AutomaticSize.Y
+Instance.new("UICorner", MsgPopup).CornerRadius = UDim.new(0, 10)
+local popStroke = Instance.new("UIStroke", MsgPopup); popStroke.Color = PiratesTheme.accent; popStroke.Thickness = 1
+Instance.new("UIListLayout", MsgPopup).Padding = UDim.new(0, 0)
+
+local function closeMsgPopup() MsgPopup.Visible = false end
+
+local function addPopupItem(icon, label, order, destructive, callback)
+    local item = Instance.new("TextButton", MsgPopup)
+    item.Size = UDim2.new(1, 0, 0, 38); item.LayoutOrder = order
+    item.BackgroundTransparency = 1; item.Text = ""; item.ZIndex = 201
+    local ico = Instance.new("TextLabel", item); ico.Size = UDim2.new(0, 26, 1, 0); ico.Position = UDim2.new(0, 6, 0, 0)
+    ico.BackgroundTransparency = 1; ico.Text = icon; ico.TextSize = 14; ico.Font = Enum.Font.Gotham
+    ico.TextColor3 = destructive and Color3.fromRGB(240, 75, 75) or PiratesTheme.accent; ico.ZIndex = 202
+    local lbl = Instance.new("TextLabel", item); lbl.Size = UDim2.new(1, -38, 1, 0); lbl.Position = UDim2.new(0, 34, 0, 0)
+    lbl.BackgroundTransparency = 1; lbl.Text = label; lbl.TextSize = 11; lbl.Font = Enum.Font.Gotham
+    lbl.TextColor3 = destructive and Color3.fromRGB(240, 75, 75) or PiratesTheme.text
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 202
+    item.MouseButton1Click:Connect(function() closeMsgPopup(); task.spawn(callback) end)
+end
+
+local function showMsgPopup(screenPos, options)
+    for _, c in pairs(MsgPopup:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    for i, opt in ipairs(options) do addPopupItem(opt.icon, opt.label, i, opt.destructive or false, opt.callback) end
+    local cam = workspace.CurrentCamera
+    local vpSize = cam and cam.ViewportSize or Vector2.new(800, 600)
+    local popH = #options * 38
+    local px = math.clamp(screenPos.X - 75, 4, vpSize.X - 154)
+    local py = screenPos.Y - popH - 10
+    if py < 4 then py = screenPos.Y + 10 end
+    py = math.clamp(py, 4, vpSize.Y - popH - 4)
+    MsgPopup.Position = UDim2.new(0, px, 0, py)
+    MsgPopup.Visible = true
+end
+
+UserInputService.InputBegan:Connect(function(inp)
+    if not MsgPopup.Visible then return end
+    if inp.UserInputType ~= Enum.UserInputType.MouseButton1 and inp.UserInputType ~= Enum.UserInputType.Touch then return end
+    local p = inp.Position; local abs = MsgPopup.AbsolutePosition; local sz = MsgPopup.AbsoluteSize
+    if p.X < abs.X or p.X > abs.X + sz.X or p.Y < abs.Y or p.Y > abs.Y + sz.Y then closeMsgPopup() end
+end)
+
+local function createBubble(player, msg, isPrivate)
+    if not player or not player.Character then return end
+    local char = player.Character
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local existing = char:FindFirstChild("PiratesBubble")
+    if existing then existing:Destroy() end
+    local bg = Instance.new("BillboardGui", head)
+    bg.Name = "PiratesBubble"; bg.Size = UDim2.new(0, 180, 0, 40)
+    bg.StudsOffset = Vector3.new(0, 2.5, 0); bg.AlwaysOnTop = true
+    local lbl = Instance.new("TextLabel", bg)
+    lbl.Size = UDim2.new(1, 0, 1, 0); lbl.BackgroundColor3 = PiratesTheme.headerBg
+    lbl.BackgroundTransparency = 0.08; lbl.BorderSizePixel = 0
+    local displayMsg = isPrivate and "🔒 "..msg or msg
+    if displayMsg:match("^%[STICKER:%d+%]$") then displayMsg = "🎨 Sticker" end
+    lbl.Text = displayMsg:sub(1, 60); lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.Font = Enum.Font.Gotham; lbl.TextSize = 11; lbl.TextWrapped = true
+    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 8)
+    local bst = Instance.new("UIStroke", lbl); bst.Color = PiratesTheme.accent; bst.Thickness = 1
+    task.delay(6, function() if bg and bg.Parent then bg:Destroy() end end)
+end
+
+local function trimMessages()
+    local children = {}
+    for _, c in pairs(ChatLog:GetChildren()) do
+        if c:IsA("Frame") then table.insert(children, c) end
+    end
+    if #children > MAX_MESSAGES then
+        table.sort(children, function(a, b)
+            local ao = tonumber(a.LayoutOrder) or 0
+            local bo = tonumber(b.LayoutOrder) or 0
+            if ao ~= bo then return ao < bo end
+            local as = tonumber(a:GetAttribute("PiratesInsertSeq")) or 0
+            local bs = tonumber(b:GetAttribute("PiratesInsertSeq")) or 0
+            return as < bs
+        end)
+        for i = 1, #children - MAX_MESSAGES do
+            local c = children[i]
+            if c and c.Parent then c:Destroy() end
+        end
+    end
+end
+
+addMessage = function(sender, msg, isSystem, order, senderUid, isPrivate, skipBubble, replyTo)
+    if MutedPlayers[senderUid] and senderUid ~= RealUserId then return end
+    isSystem = isSystem or false; isPrivate = isPrivate or false
+    order = order or 0; senderUid = senderUid or 0
+    local safeName = SafeEncodeMsg(sender)
+    local safeMsg = SafeEncodeMsg(msg)
+    local safeReply = replyTo and SafeEncodeMsg(replyTo) or ""
+
+    local wasAtBottom = false
+    pcall(function()
+        local maxY = ChatLog.AbsoluteCanvasSize.Y - ChatLog.AbsoluteSize.Y
+        if maxY <= 0 then
+            wasAtBottom = true
+        else
+            wasAtBottom = (ChatLog.CanvasPosition.Y >= maxY - 20)
+        end
+    end)
+
+    local wrapperFrame = Instance.new("Frame", ChatLog)
+    wrapperFrame.BackgroundTransparency = 1; wrapperFrame.BorderSizePixel = 0
+    wrapperFrame.AutomaticSize = Enum.AutomaticSize.Y
+    wrapperFrame.Size = UDim2.new(1, 0, 0, 0)
+    wrapperFrame.LayoutOrder = order ~= 0 and order or os.time() * 1000
+
+    _msgInsertSeq = _msgInsertSeq + 1
+    wrapperFrame:SetAttribute("PiratesInsertSeq", _msgInsertSeq)
+
+    local pfpFrame = Instance.new("Frame", wrapperFrame)
+    pfpFrame.Size = UDim2.new(0, 26, 0, 26)
+    pfpFrame.Position = UDim2.new(0, 0, 0, 0)
+    pfpFrame.BackgroundColor3 = PiratesTheme.accent
+    pfpFrame.BorderSizePixel = 0
+    Instance.new("UICorner", pfpFrame).CornerRadius = UDim.new(1, 0)
+    local pfpImg = Instance.new("ImageLabel", pfpFrame)
+    pfpImg.Size = UDim2.new(1, 0, 1, 0); pfpImg.BackgroundTransparency = 1
+    Instance.new("UICorner", pfpImg).CornerRadius = UDim.new(1, 0)
+    if not isSystem and senderUid ~= 0 then
+        if CustomPFP[senderUid] then
+            pfpImg.Image = CustomPFP[senderUid]
+        else
+            task.spawn(function()
+                pcall(function()
+                    local content, ready = Players:GetUserThumbnailAsync(senderUid, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    if ready and pfpImg and pfpImg.Parent then pfpImg.Image = content end
+                end)
+            end)
+        end
+    else
+        pfpImg.Image = "rbxassetid://7733960981"
+    end
+
+    local TextButton = Instance.new("TextButton", wrapperFrame)
+    TextButton.AutomaticSize = Enum.AutomaticSize.Y
+    TextButton.Size = UDim2.new(1, -32, 0, 0)
+    TextButton.Position = UDim2.new(0, 32, 0, 0)
+    TextButton.BackgroundColor3 = isSystem and Color3.fromRGB(45, 36, 22) or PiratesTheme.cardBg
+    TextButton.BackgroundTransparency = 0.05
+    TextButton.BorderSizePixel = 0
+    TextButton.AutoButtonColor = false
+    TextButton.RichText = true; TextButton.TextWrapped = true
+    TextButton.TextXAlignment = Enum.TextXAlignment.Left
+    TextButton.Font = Enum.Font.Gotham; TextButton.TextSize = 11
+    TextButton.TextColor3 = PiratesTheme.text
+    TextButton.Text = ""; TextButton.ZIndex = 2
+    local _pad = Instance.new("UIPadding", TextButton)
+    _pad.PaddingLeft = UDim.new(0, 8); _pad.PaddingRight = UDim.new(0, 8)
+    _pad.PaddingTop = UDim.new(0, 5); _pad.PaddingBottom = UDim.new(0, 5)
+    Instance.new("UICorner", TextButton).CornerRadius = UDim.new(0, 9)
+
+    local stickerId = string.match(safeMsg, "^%[STICKER:(%d+)%]$")
+    if stickerId then
+        TextButton.BackgroundTransparency = 1
+        _pad.PaddingLeft = UDim.new(0, 4); _pad.PaddingRight = UDim.new(0, 4)
+        _pad.PaddingTop = UDim.new(0, 2); _pad.PaddingBottom = UDim.new(0, 2)
+
+        local stickerImg = Instance.new("ImageLabel", TextButton)
+        stickerImg.Size = UDim2.new(0, 110, 0, 110)
+        stickerImg.Position = UDim2.new(0, 0, 0, 0)
+        stickerImg.BackgroundColor3 = PiratesTheme.cardBg
+        stickerImg.BackgroundTransparency = 0; stickerImg.BorderSizePixel = 0
+        stickerImg.ScaleType = Enum.ScaleType.Fit
+        stickerImg.Image = "rbxthumb://type=Asset&id="..stickerId.."&w=420&h=420"
+        stickerImg.ZIndex = 3
+        Instance.new("UICorner", stickerImg).CornerRadius = UDim.new(0, 10)
+        local sst = Instance.new("UIStroke", stickerImg)
+        sst.Color = PiratesTheme.accent; sst.Thickness = 1.5; sst.Transparency = 0.3
+
+        TextButton.Size = UDim2.new(0, 118, 0, 118)
+        TextButton.AutomaticSize = Enum.AutomaticSize.None
+
+        local nameLbl = Instance.new("TextLabel", wrapperFrame)
+        nameLbl.Size = UDim2.new(1, -40, 0, 14); nameLbl.Position = UDim2.new(0, 34, 0, -16)
+        nameLbl.BackgroundTransparency = 1
+        local color = GetUserColor(safeName)
+        nameLbl.Text = safeName
+        nameLbl.TextColor3 = color
+        nameLbl.Font = Enum.Font.GothamBold; nameLbl.TextSize = 10
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.RichText = true; nameLbl.ZIndex = 5
+    else
+        if isSystem then
+            TextButton.Text = "<font color='rgb(255,195,75)'><b>[SYSTEM]</b></font> "..safeMsg
+        else
+            local tagData = TagCache[senderUid] or {text="", type="Normal", tagTitle=nil, titleColor=nil}
+            if tagData.type == "Normal" then
+                local ct = CustomTitles[senderUid]
+                if ct and ct.expiresAt and ct.expiresAt > os.time() then
+                    tagData = {text="["..ct.title.."] ", type="CustomTitle", tagTitle="["..ct.title.."]", titleColor=(ct.color == "RGB_ANIMATED") and "RGB" or ct.color}
+                end
+            end
+            if isPlayerOwner({Name=safeName, UserId=senderUid}) and tagData.type == "Normal" then
+                tagData = {text="[ᴏᴡɴᴇʀ] ", type="Owner", tagTitle="[ᴏᴡɴᴇʀ]"}
+            end
+
+            local privTag = isPrivate and "<font color='rgb(255,110,255)'>[PVT] </font>" or ""
+            local color = GetUserColor(safeName)
+            local colorStr = string.format("rgb(%d,%d,%d)",
+                math.clamp(math.floor(color.R*255),0,255),
+                math.clamp(math.floor(color.G*255),0,255),
+                math.clamp(math.floor(color.B*255),0,255))
+
+            local replyPart = ""
+            if safeReply ~= "" then
+                replyPart = "<font color='rgb(130,175,255)'>↩ "..safeReply.."</font>\n"
+            end
+
+            if tagData.type ~= "Normal" then
+                SpecialLabels[TextButton] = {
+                    displayName = safeName, msg = safeMsg, nameColor = colorStr,
+                    isPrivate = isPrivate, tagType = tagData.type, tagTitle = tagData.tagTitle,
+                    titleColor = tagData.titleColor, replyTo = safeReply, senderUid = senderUid
+                }
+                TextButton.Text = replyPart..string.format("%s<font color='rgb(200,150,255)'><b>%s</b></font> <font color='%s'><b>%s</b></font>: %s",
+                    privTag, tagData.tagTitle or "", colorStr, safeName, safeMsg)
+            else
+                TextButton.Text = replyPart..string.format("%s<font color='%s'><b>%s</b></font>: %s",
+                    privTag, colorStr, safeName, safeMsg)
+            end
+
+            if not skipBubble then
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.UserId == senderUid then createBubble(p, safeMsg, isPrivate) end
+                end
+            end
+        end
+    end
+
+    if order and order ~= 0 then
+        local keyStr = tostring(order)
+        local inserted = false
+        local numOrder = tonumber(keyStr) or 0
+        for i = #sortedMessageKeys, 1, -1 do
+            local existingNum = tonumber(sortedMessageKeys[i]) or 0
+            if numOrder >= existingNum then
+                table.insert(sortedMessageKeys, i + 1, keyStr); inserted = true; break
+            end
+        end
+        if not inserted then table.insert(sortedMessageKeys, 1, keyStr) end
+        keyToButton[keyStr] = TextButton
+        task.spawn(trimMessages)
+    end
+
+    local holdTriggered = false
+    local msgFbKey = (order and order ~= 0) and tostring(order) or nil
+    local isOwnMsg = (senderUid == RealUserId)
+
+    TextButton.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            holdTriggered = false
+            local tapPos = inp.Position
+            task.delay(0.55, function()
+                if holdTriggered then return end
+                holdTriggered = true; closeMsgPopup()
+                local opts = {}
+                table.insert(opts, {icon="📋", label="Copy", callback=function()
+                    pcall(function()
+                        if setclipboard then setclipboard(safeMsg)
+                        elseif toclipboard then toclipboard(safeMsg) end
+                    end)
+                end})
+                if not isOwnMsg and not isSystem then
+                    table.insert(opts, {icon="💬", label="PVT", callback=function()
+                        PrivateTargetId = senderUid; PrivateTargetName = safeName
+                        Input.PlaceholderText = "[PVT] "..safeName.."..."
+                        InputArea.BackgroundColor3 = PiratesTheme.accent
+                    end})
+                    table.insert(opts, {icon="↩️", label="Reply", callback=function()
+                        ReplyTargetName = safeName; ReplyTargetMsg = safeMsg
+                        ReplyBanner.Visible = true; ReplyLabel.Text = "Replying to "..safeName..": "..safeMsg
+                    end})
+                end
+                if isOwnMsg and not isSystem and msgFbKey then
+                    table.insert(opts, {icon="✏️", label="Edit", callback=function()
+                        editingKey = msgFbKey; Input.Text = msg
+                    end})
+                    table.insert(opts, {icon="🗑️", label="Unsend", destructive=true, callback=function()
+                        local newKeys = {}
+                        for _, k in ipairs(sortedMessageKeys) do if k ~= msgFbKey then table.insert(newKeys, k) end end
+                        sortedMessageKeys = newKeys; keyToButton[msgFbKey] = nil; SpecialLabels[TextButton] = nil
+                        if wrapperFrame and wrapperFrame.Parent then
+                            TweenService:Create(TextButton, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
+                            task.delay(0.22, function() if wrapperFrame and wrapperFrame.Parent then wrapperFrame:Destroy() end end)
+                        end
+                        task.spawn(function()
+                            pcall(function()
+                                fbReq({Url=UNSENT_URL.."/"..msgFbKey..".json", Method="PUT", Headers={["Content-Type"]="application/json"}, Body=HttpService:JSONEncode(true)})
+                                fbReq({Url=DATABASE_URL.."/"..msgFbKey..".json", Method="DELETE"})
+                            end)
+                        end)
+                    end})
+                end
+                showMsgPopup(Vector2.new(tapPos.X, tapPos.Y), opts)
+            end)
+        end
+    end)
+
+    task.spawn(function()
+        for i = 1, 5 do RunService.Heartbeat:Wait() end
+        if ChatLog and not userScrolledUp and wasAtBottom then
+            pcall(function()
+                ChatLog.CanvasPosition = Vector2.new(0, ChatLog.AbsoluteCanvasSize.Y)
+            end)
+        end
+    end)
+
+    if not isSystem and senderUid ~= RealUserId and not skipBubble then
+        local notifText
+        if isPrivate then
+            notifText = "<font color='rgb(255,120,255)'>[PVT] </font><b>"..safeName.."</b>: "..safeMsg:sub(1, 50)
+        else
+            local color = GetUserColor(safeName)
+            local cs = string.format("rgb(%d,%d,%d)", math.floor(color.R*255), math.floor(color.G*255), math.floor(color.B*255))
+            notifText = "<font color='"..cs.."'><b>"..safeName.."</b></font>: "..safeMsg:sub(1, 50)
+        end
+        showNotif(notifText)
+    end
+end
+
+local _lastRgbTick = 0
+RunService.Heartbeat:Connect(function()
+    local now = tick()
+    if now - _lastRgbTick < 0.1 then return end
+    _lastRgbTick = now
+    local hue = (now % 5) / 5
+    local color = Color3.fromHSV(hue, 1, 1)
+    local r = math.clamp(math.floor(color.R*255), 0, 255)
+    local g = math.clamp(math.floor(color.G*255), 0, 255)
+    local b = math.clamp(math.floor(color.B*255), 0, 255)
+    local rgbStr = "rgb("..r..","..g..","..b..")"
+    for label, data in pairs(SpecialLabels) do
+        if label and label.Parent then
+            local safeMsg = SafeEncodeMsg(data.msg)
+            local privTag = data.isPrivate and "<font color='rgb(255,100,255)'>[PVT] </font>" or ""
+            local tagTitle = data.tagTitle or ("["..(data.tagType or ""):upper().."]")
+            local fmtText
+            if data.tagType == "CustomTitle" then
+                local ctc = (data.titleColor == "RGB") and rgbStr or (data.titleColor or "rgb(255,80,80)")
+                fmtText = string.format("%s<font color='%s'><b>%s</b></font> <font color='%s'><b>%s</b></font>: %s",
+                    privTag, ctc, tagTitle, data.nameColor, data.displayName, safeMsg)
+            else
+                fmtText = string.format("%s<font color='%s'><b>%s</b></font> <font color='%s'><b>%s</b></font>: %s",
+                    privTag, rgbStr, tagTitle, data.nameColor, data.displayName, safeMsg)
+            end
+            if data.replyTo and data.replyTo ~= "" then
+                fmtText = "<font color='rgb(130,175,255)'>↩ "..SafeEncodeMsg(data.replyTo).."</font>\n"..fmtText
+            end
+            label.RichText = true
+            label.Text = fmtText
+        else
+            SpecialLabels[label] = nil
+        end
+    end
+end)
+
+-- ============================================================
+-- TAB REORDERING & FLOATING ICON
+-- ============================================================
+local allTabs = {}
+for _, c in ipairs(TabBar:GetChildren()) do
+    if c:IsA("TextButton") then table.insert(allTabs, c) end
+end
+local tabWidth = math.floor((362 - (#allTabs - 1) * 3) / #allTabs)
+for _, b in ipairs(allTabs) do
+    b.Size = UDim2.new(0, tabWidth, 1, 0)
+    b.TextSize = 8
+end
+
+FloatBtn = Instance.new("TextButton", ScreenGui)
+FloatBtn.Size = UDim2.new(0, 44, 0, 44); FloatBtn.Position = UDim2.new(0, 12, 0.5, -22)
+FloatBtn.BackgroundColor3 = PiratesTheme.accent; FloatBtn.Text = "🏴‍☠️"
+FloatBtn.TextColor3 = Color3.new(1, 1, 1); FloatBtn.Font = Enum.Font.GothamBold
+FloatBtn.TextSize = 18; FloatBtn.BorderSizePixel = 0; FloatBtn.Active = true; FloatBtn.ZIndex = 100
+Instance.new("UICorner", FloatBtn).CornerRadius = UDim.new(1, 0)
+local fbStroke = Instance.new("UIStroke", FloatBtn)
+fbStroke.Color = Color3.fromRGB(255, 255, 255); fbStroke.Thickness = 2
+
+task.spawn(function()
+    while FloatBtn and FloatBtn.Parent do
+        local hue = (tick() % 5) / 5
+        FloatBtn.BackgroundColor3 = Color3.fromHSV(hue, 0.85, 0.9)
+        task.wait(0.05)
+    end
+end)
+
+do
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    FloatBtn.InputBegan:Connect(function(inp)
+        if isGuiLocked then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; moved = false; dragStart = inp.Position; startPos = FloatBtn.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if isGuiLocked then dragging = false; return end
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            local delta = inp.Position - dragStart
+            if math.abs(delta.X) > 6 or math.abs(delta.Y) > 6 then moved = true end
+            FloatBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    FloatBtn.MouseButton1Click:Connect(function()
+        if isGuiLocked then return end
+        if moved then moved = false; return end
+        Main.Visible = not Main.Visible
+        FloatBtn.Text = Main.Visible and "✕" or "🏴‍☠️"
+    end)
+end
+
+-- ============================================================
+-- CHAT SEND & POLLING
+-- ============================================================
+local function send(msg, isSystem)
+    if isKickedOrBanned then return end
+    msg = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if msg == "" then return end
+
+    local isCommand = string.sub(msg, 1, 1) == "/"
+    local now = os.time()
+    if not isSystem and not isCommand then
+        if now - _lastSentTime < 2 and msg == _lastSentMsg then return end
+        _lastSentTime = now; _lastSentMsg = msg
+        if #msg > MAX_CHAR_LIMIT then msg = msg:sub(1, MAX_CHAR_LIMIT) end
+    end
+
+    if isCommand then
+        local parts = string.split(msg, " ")
+        local cmd = string.lower(parts[1])
+
+        if cmd == "/clear" then
+            for _, c in pairs(ChatLog:GetChildren()) do
+                if c:IsA("Frame") then c:Destroy() end
+            end
+            sortedMessageKeys = {}; keyToButton = {}
+            showNotif("🧹 Chat cleared locally")
+            return
+        elseif cmd == "/commands" then
+            addMessage("SYSTEM", "/clear, /ping, /time, /players, /jobid, /reset, /rejoin, /pfp [id], /theme [name]", true, 0, 0, false, true)
+            return
+        elseif cmd == "/ping" then
+            local p = 0
+            pcall(function() p = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
+            addMessage("SYSTEM", "🏓 Ping: "..math.floor(p).." ms", true, 0, 0, false, true)
+            return
+        elseif cmd == "/time" then
+            addMessage("SYSTEM", "🕐 "..os.date("%H:%M:%S"), true, 0, 0, false, true)
+            return
+        elseif cmd == "/players" then
+            local pl = {}
+            for _, p in pairs(Players:GetPlayers()) do table.insert(pl, p.DisplayName.." (@"..p.Name..")") end
+            addMessage("SYSTEM", "👥 Players ("..#pl.."): "..table.concat(pl, ", "), true, 0, 0, false, true)
+            return
+        elseif cmd == "/jobid" then
+            addMessage("SYSTEM", "🆔 "..JobId, true, 0, 0, false, true)
+            return
+        elseif cmd == "/reset" then
+            if LocalPlayer.Character then LocalPlayer.Character:BreakJoints() end
+            return
+        elseif cmd == "/rejoin" then
+            game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+            return
+        elseif cmd == "/pfp" and parts[2] then
+            local asset = parts[2]
+            if not asset:find("rbxassetid://") then asset = "rbxassetid://"..asset end
+            applyPFP(asset, "custom")
+            return
+        elseif cmd == "/theme" and parts[2] then
+            for _, t in ipairs(ThemeColors) do
+                if string.lower(t.name) == string.lower(parts[2]) then
+                    applyPiratesTheme(t); saveTheme()
+                    addMessage("SYSTEM", "🎨 Theme: "..t.name, true, 0, 0, false, true)
+                    return
+                end
+            end
+            return
+        end
+    end
+
+    local timestamp = string.format("%012d", os.time())..math.random(100, 999)
+    local replyStr = ReplyTargetName and (ReplyTargetName..": "..(ReplyTargetMsg or "")) or nil
+    local data = {
+        Sender = RealDisplayName, SenderUid = RealUserId, Content = msg, Server = JobId,
+        IsSystem = isSystem or false, TargetId = PrivateTargetId, ReplyTo = replyStr
+    }
+    processedKeys[timestamp] = true
+    addMessage(RealDisplayName, msg, isSystem, tonumber(timestamp) or 0, RealUserId, PrivateTargetId ~= nil, false, replyStr)
+    ReplyTargetName = nil; ReplyTargetMsg = nil; ReplyBanner.Visible = false
+    PrivateTargetId = nil; PrivateTargetName = nil
+    Input.PlaceholderText = "Message..."; InputArea.BackgroundColor3 = PiratesTheme.cardBg
+
+    task.spawn(function()
+        pcall(function()
+            fbReq({Url = DATABASE_URL.."/"..timestamp..".json", Method = "PUT", Headers = {["Content-Type"]="application/json"}, Body = HttpService:JSONEncode(data)})
+        end)
+    end)
+end
+
+SendBtn.MouseButton1Click:Connect(function()
+    local txt = Input.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    if txt == "" then return end
+    Input.Text = ""
+    send(txt, false)
+end)
+
+Input.FocusLost:Connect(function(enter)
+    if enter then
+        local txt = Input.Text:gsub("^%s+", ""):gsub("%s+$", "")
+        if txt == "" then return end
+        Input.Text = ""
+        send(txt, false)
+    end
+end)
+
+local _firstLoadDone = false
+local function fetchMessages()
+    local ok = pcall(function()
+        local res = fbReq({Url = DATABASE_URL..".json", Method = "GET"})
+        if not res or not res.Body or res.Body == "null" then _firstLoadDone = true; return end
+        local okJ, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+        if not okJ or type(data) ~= "table" then return end
+
+        local keys = {}
+        for k, _ in pairs(data) do table.insert(keys, k) end
+        table.sort(keys, function(a, b)
+            local na = tonumber(a) or 0
+            local nb = tonumber(b) or 0
+            if na ~= nb then return na < nb end
+            return tostring(a) < tostring(b)
+        end)
+
+        local isFirst = not _firstLoadDone
+        local startIdx = isFirst and math.max(1, #keys - 24) or 1
+
+        for i = startIdx, #keys do
+            local key = keys[i]
+            local msg = data[key]
+            if not processedKeys[key] and type(msg) == "table" and msg.Content then
+                processedKeys[key] = true
+                local isSystem = msg.IsSystem or false
+                local srv = msg.Server or ""
+                if isSystem or srv == JobId or srv == "GLOBAL" or srv == "" then
+                    local tgt = msg.TargetId
+                    if not tgt or tgt == RealUserId or msg.SenderUid == RealUserId then
+                        addMessage(msg.Sender or "Unknown", msg.Content, isSystem, tonumber(key) or 0, msg.SenderUid or 0, tgt ~= nil, isFirst, msg.ReplyTo)
+                    end
+                end
+            end
+        end
+        _firstLoadDone = true
+    end)
+    if not ok then _firstLoadDone = true end
+end
+
+task.spawn(fetchMessages)
+task.spawn(function()
+    while task.wait(1.5) do
+        if isKickedOrBanned then break end
+        pcall(fetchMessages)
+    end
+end)
+
+addMessage("SYSTEM", "🏴‍☠️ Welcome to PIRATES RECHAT! Type /commands for help.", true, 0, 0, false, true)
+showNotif("🏴‍☠️ PIRATES RECHAT Loaded!")
